@@ -1,55 +1,24 @@
+
 #!/usr/bin/env python3
 """
-Propagación en redes: Implementaciones ligeras de GUILD (RWR) y DIAMOnD
+Propagación en redes de genes (Homo sapiens): GUILD (RWR) y DIAMOnD
 
-Este script ofrece una implementación de referencia, documentada y sencilla, de dos
-estrategias clásicas de priorización de genes basadas en redes:
-
-1) Difusión tipo GUILD mediante Random Walk with Restart (RWR)
-   - Produce un ranking continuo de todos los nodos según su proximidad difusa a las semillas.
-   - Iteración: p <- (1 - alpha) * W @ p + alpha * p0, donde W es la matriz de transición
-     (adyacencia normalizada por columnas) y p0 es el vector inicial sobre las semillas.
-
-2) Expansión tipo DIAMOnD con prueba hipergeométrica
-   - Añade iterativamente el nodo más significativamente conectado al módulo de semillas actual,
-     midiendo la probabilidad (cola) de observar al menos c enlaces al módulo dado el grado del candidato.
-
-Novedades (robustez de entrada y gráficos automáticos)
------------------------------------------------------
-- Si el archivo pasado en `--seeds` **no existe** o está **vacío**, se usan por defecto
-  las semillas **ENO1, PGK1, HK2** (se avisa por logging).
-- Si **ninguna semilla** está en la red, el script **elige automáticamente** como semillas
-  los **3 nodos de mayor grado** en la red (comportamiento fijo, no configurable).
-- **Máximo 3 semillas**: si se proporcionan más de 3, se **recortan a las 3 primeras** (se avisa).
-- Se puede pasar una lista de semillas **inline** con `--seeds-inline ENO1,PGK1,HK2`.
-- **Gráficos automáticos**:
-  - Si ejecutas **solo GUILD** o **solo DIAMOnD**, se generan 2 figuras informativas del algoritmo.
-  - Si al terminar hay **resultados de ambos métodos** disponibles en `results/`, se genera además
-    un gráfico comparativo de **Jaccard Top-N vs N** automáticamente (sin flags extra).
-
-Entradas
---------
-- Archivo de aristas (tab/coma/espacios). Las dos primeras columnas son nodos (HUGO).
-  La tercera (opcional) es peso. Grafo no dirigido. Si hay pesos, RWR puede usarlos.
-- Archivo de semillas: un gen por línea (opcional). Por defecto, si falta, se usan ENO1, PGK1, HK2.
-
-Salidas
--------
-- Archivo TSV en `results/` con cabeceras descriptivas. Las columnas dependen del algoritmo.
-- Figuras PNG en `results/plots/`.
-
-Ejemplos rápidos (CLI)
-----------------------
-RWR (GUILD):
-    python scripts/propagacion_red.py --algo guild --input data/network_guild.txt --output results/guild_results.tsv --alpha 0.5 --tol 1e-9 --max-iters 10000
-
-DIAMOnD:
-    python scripts/propagacion_red.py --algo diamond --input data/network_diamond.txt --output results/diamond_results_k200.tsv --k 200
-
-Dependencias
-------------
-- pandas, networkx, numpy, matplotlib (para las figuras). No se requiere SciPy (hipergeométrica exacta con `math.comb`).
+Cambios clave respecto al original:
+- CLI simplificada con subcomandos: `guild`, `diamond`, `both`.
+- Compatibilidad retro: siguen funcionando --algoritmo/--algo y el resto de flags.
+- Rutas de salida automáticas si no se indican (results/*.tsv).
+- Correcciones de bugs y limpieza:
+  * Eliminado código duplicado y referencias a variables no definidas.
+  * _plots_auto_comparativo_si_ambos ahora solo llama a _plots_comparativos.
+  * guardar_tsv maneja rutas sin carpeta (p.ej., "salida.tsv").
+  * __main__ sin doble sys.exit.
+- Semillas:
+  * `--seeds-inline ENO1,PGK1,HK2` o archivo `--seeds`. Máximo 3 (se avisa si hay más).
+  * Si ninguna semilla está en la red y no se desactiva, se usan los 3 nodos de mayor grado.
+- Entradas: aristas (u v [w]); pesos opcionales. Grafo no dirigido.
+- Salidas: TSV y figuras PNG en results/plots/. Si hay resultados de ambos, se genera Jaccard Top-N.
 """
+
 from __future__ import annotations
 
 import argparse
@@ -73,17 +42,17 @@ import matplotlib.pyplot as plt
 def _detectar_separador(ruta: str) -> str:
     """Detecta heurísticamente el delimitador entre tab, coma o espacio.
 
-    Devuelve un separador válido para `pandas.read_csv` ("\t", "," o "\s+").
+    Devuelve un separador válido para `pandas.read_csv` ("\t", "," o "\\s\+").
     """
     with open(ruta, "r", encoding="utf-8") as f:
         for linea in f:
             if linea.strip():
-                if "	" in linea:
-                    return "	"
+                if "\t" in linea:
+                    return "\t"
                 if "," in linea:
                     return ","
-                return "\s+"  # uno o más espacios
-    return "\s+"
+                return r"\s+"  # uno o más espacios
+    return r"\s+"
 
 
 def cargar_red(path: str) -> nx.Graph:
@@ -372,11 +341,14 @@ def diamond(
 # ----------------------------
 
 def _asegurar_dir(path: str) -> None:
+    if not path:
+        return
     os.makedirs(path, exist_ok=True)
 
 
 def _guardar_fig(path: str) -> None:
     plt.tight_layout()
+    _asegurar_dir(os.path.dirname(path))
     plt.savefig(path, dpi=150)
     plt.close()
     logging.info("Figura guardada en '%s'", path)
@@ -437,9 +409,7 @@ def _plots_diamond(df_d: pd.DataFrame, plots_dir: str) -> None:
 def _plots_comparativos(df_g: pd.DataFrame, df_d: pd.DataFrame, plots_dir: str) -> None:
     _asegurar_dir(plots_dir)
     # Jaccard Top-N vs N
-    # Ranking GUILD: por score_guild descendente
     g_ranked = df_g.sort_values("score_guild", ascending=False, ignore_index=True)["gene"].tolist()
-    # Ranking DIAMOnD: por step_added ascendente
     d_ranked = df_d.sort_values("step_added", ascending=True, ignore_index=True)["gene"].tolist()
 
     maxN = min(200, len(g_ranked), len(d_ranked))
@@ -467,105 +437,195 @@ def _plots_comparativos(df_g: pd.DataFrame, df_d: pd.DataFrame, plots_dir: str) 
     _guardar_fig(os.path.join(plots_dir, "jaccard_topN.png"))
 
 
+def _plots_auto_postrun_single(algo: str, df: pd.DataFrame, out_path: str) -> None:
+    base_dir = os.path.dirname(os.path.abspath(out_path)) or "."
+    plots_dir = os.path.join(base_dir, "plots")
+    if algo == "guild":
+        _plots_guild(df, plots_dir)
+    elif algo == "diamond":
+        _plots_diamond(df, plots_dir)
+
+
+def _plots_auto_comparativo_si_ambos(out_guild: str, out_diamond: str) -> None:
+    try:
+        base_dir = os.path.dirname(os.path.abspath(out_guild)) or "."
+        plots_dir = os.path.join(base_dir, "plots")
+        df_g = pd.read_csv(out_guild, sep="\t")
+        df_d = pd.read_csv(out_diamond, sep="\t")
+        _plots_comparativos(df_g, df_d, plots_dir)
+    except Exception as e:
+        logging.warning("No se pudieron generar los plots comparativos automáticamente: %s", e)
+
+
 # ----------------------------
 # Orquestación y CLI
 # ----------------------------
 
 def guardar_tsv(df: pd.DataFrame, ruta_salida: str) -> None:
-    os.makedirs(os.path.dirname(ruta_salida), exist_ok=True)
-    df.to_csv(ruta_salida, sep="	", index=False)
+    carpeta = os.path.dirname(ruta_salida)
+    if carpeta:
+        os.makedirs(carpeta, exist_ok=True)
+    df.to_csv(ruta_salida, sep="\t", index=False)
     logging.info("Resultados guardados en '%s' (%d filas)", ruta_salida, len(df))
 
 
+def _default_out_path(algo: str, input_path: str | None = None, k: int | None = None) -> str:
+    base_dir = "results"
+    os.makedirs(base_dir, exist_ok=True)
+    base = "network" if not input_path else os.path.splitext(os.path.basename(input_path))[0]
+    if algo == "guild":
+        return os.path.join(base_dir, f"{base}_guild.tsv")
+    if algo == "diamond":
+        suf = f"k{k}" if k else ""
+        return os.path.join(base_dir, f"{base}_diamond_{suf}.tsv" if suf else f"{base}_diamond.tsv")
+    raise ValueError("Algo desconocido para default path")
+
+
+def _add_common_args(p: argparse.ArgumentParser) -> None:
+    p.add_argument("-i", "--input", required=False, help="Archivo de aristas (u v [w])")
+    p.add_argument("--seeds", required=False, default=None, help="Archivo con semillas (opcional)")
+    p.add_argument("--seeds-inline", required=False, default=None, help="Semillas inline separadas por coma, p. ej., ENO1,PGK1,HK2")
+    p.add_argument("--no-auto-seeds", action="store_true", help="Desactiva la selección automática de semillas por grado si ninguna semilla aparece en la red")
+    p.add_argument("--log", default="INFO", help="Nivel de logging: DEBUG, INFO, WARNING, ERROR")
+
+
 def parsear_args(argv: List[str]) -> argparse.Namespace:
-    p = argparse.ArgumentParser(
+    parser = argparse.ArgumentParser(
         description="Propagación en redes: GUILD (RWR) y DIAMOnD",
         formatter_class=argparse.ArgumentDefaultsHelpFormatter,
     )
-    p.add_argument("--algo", required=True, choices=["guild", "diamond"], help="Algoritmo a ejecutar")
-    p.add_argument("--input", required=True, help="Ruta al archivo de aristas (u v [w])")
-    p.add_argument("--seeds", required=False, default="data/genes_seed.txt", help="Ruta al archivo de semillas (opcional)")
-    p.add_argument("--seeds-inline", required=False, default=None, help="Lista de semillas separadas por coma, p. ej., ENO1,PGK1,HK2")
-    p.add_argument("--no-auto-seeds", action="store_true", help="Desactiva la selección automática de semillas por grado si ninguna semilla aparece en la red")
-    p.add_argument("--output", required=True, help="Ruta del TSV de salida")
 
-    # Parámetros RWR
-    p.add_argument("--alpha", type=float, default=0.5, help="Probabilidad de reinicio (guild)")
-    p.add_argument("--tol", type=float, default=1e-9, help="Tolerancia L1 de convergencia (guild)")
-    p.add_argument("--max-iters", type=int, default=10000, help="Máximo de iteraciones (guild)")
-    p.add_argument("--usar-pesos", action="store_true", help="Usar pesos de arista si existen (guild)")
+    # Subcomandos modernos
+    sub = parser.add_subparsers(dest="cmd", required=False)
 
-    # Parámetros DIAMOnD
-    p.add_argument("--k", type=int, default=200, help="Número de nodos a añadir (diamond)")
+    p_guild = sub.add_parser("guild", help="Ejecuta RWR (GUILD)")
+    _add_common_args(p_guild)
+    p_guild.add_argument("-o", "--output", required=False, help="TSV de salida")
+    p_guild.add_argument("-a", "--alpha", type=float, default=0.5, help="Probabilidad de reinicio (guild)")
+    p_guild.add_argument("--tol", type=float, default=1e-9, help="Tolerancia L1 de convergencia (guild)")
+    p_guild.add_argument("--max-iters", type=int, default=10000, help="Máximo de iteraciones (guild)")
+    p_guild.add_argument("--usar-pesos", action="store_true", help="Usar pesos de arista si existen (guild)")
 
-    # Miscelánea
-    p.add_argument("--log", default="INFO", help="Nivel de logging: DEBUG, INFO, WARNING, ERROR")
+    p_dia = sub.add_parser("diamond", help="Ejecuta expansión DIAMOnD")
+    _add_common_args(p_dia)
+    p_dia.add_argument("-o", "--output", required=False, help="TSV de salida")
+    p_dia.add_argument("-k", type=int, default=200, help="Número de nodos a añadir (diamond)")
 
-    return p.parse_args(argv)
+    p_both = sub.add_parser("both", help="Ejecuta ambos métodos")
+    _add_common_args(p_both)
+    p_both.add_argument("--input-guild", required=False, help="Archivo de aristas para GUILD (si no, usa --input)")
+    p_both.add_argument("--input-diamond", required=False, help="Archivo de aristas para DIAMOnD (si no, usa --input)")
+    p_both.add_argument("--output-guild", required=False, help="TSV de salida para GUILD")
+    p_both.add_argument("--output-diamond", required=False, help="TSV de salida para DIAMOnD")
+    p_both.add_argument("-a", "--alpha", type=float, default=0.5, help="Probabilidad de reinicio (guild)")
+    p_both.add_argument("--tol", type=float, default=1e-9, help="Tolerancia L1 de convergencia (guild)")
+    p_both.add_argument("--max-iters", type=int, default=10000, help="Máximo de iteraciones (guild)")
+    p_both.add_argument("--usar-pesos", action="store_true", help="Usar pesos de arista si existen (guild)")
+    p_both.add_argument("-k", type=int, default=200, help="Número de nodos a añadir (diamond)")
 
+    # Flags legacy (compatibilidad)
+    parser.add_argument("--algoritmo", required=False, choices=["guild", "diamond", "ambos"], help=argparse.SUPPRESS)
+    parser.add_argument("--algo", required=False, choices=["guild", "diamond", "ambos"], help=argparse.SUPPRESS)
+    parser.add_argument("--input-legacy", dest="input", required=False, help=argparse.SUPPRESS)  # por si alguien usa --input fuera de subcomando
 
-def _plots_auto_postrun(args, df, out_path):
-    # Directorio de plots al lado de la carpeta de salida
-    base_dir = os.path.dirname(os.path.abspath(out_path))
-    plots_dir = os.path.join(base_dir, "plots")
+    args = parser.parse_args(argv)
 
-    # Plots del algoritmo ejecutado
-    if args.algo == "guild":
-        _plots_guild(df, plots_dir)
-    elif args.algo == "diamond":
-        _plots_diamond(df, plots_dir)
+    # Normaliza modo a partir de legacy si hace falta
+    legacy = getattr(args, "algoritmo", None) or getattr(args, "algo", None)
+    if args.cmd is None and legacy:
+        args.cmd = "both" if legacy == "ambos" else legacy
 
-    # Intento de comparativa si existen resultados del otro algoritmo
-    try:
-        if args.algo == "guild":
-            # Buscar algún TSV de DIAMOnD en la carpeta base de resultados
-            candidatos = glob.glob(os.path.join(base_dir, "diamond*.tsv")) + glob.glob(os.path.join(base_dir, "*diamond*.tsv"))
-            if candidatos:
-                df_d = pd.read_csv(sorted(candidatos)[0], sep="	")
-                _plots_comparativos(df, df_d, plots_dir)
-        else:
-            candidatos = glob.glob(os.path.join(base_dir, "guild*.tsv")) + glob.glob(os.path.join(base_dir, "*guild*.tsv"))
-            if candidatos:
-                df_g = pd.read_csv(sorted(candidatos)[0], sep="	")
-                _plots_comparativos(df_g, df, plots_dir)
-    except Exception as e:
-        logging.warning("No se pudieron generar los plots comparativos automáticamente: %s", e)
+    # Si no se indicó nada, por defecto 'both'
+    if args.cmd is None:
+        args.cmd = "both"
+
+    return args
 
 
 def main(argv: List[str] | None = None) -> int:
     args = parsear_args(argv or sys.argv[1:])
+
+    # Configura logging (si el subcomando no tiene --log, usa INFO)
+    log_level = getattr(args, "log", "INFO")
     logging.basicConfig(
-        level=getattr(logging, str(args.log).upper(), logging.INFO),
+        level=getattr(logging, str(log_level).upper(), logging.INFO),
         format="%(levelname)s: %(message)s",
     )
 
     try:
-        G = cargar_red(args.input)
-        semillas = cargar_semillas(args.seeds, seeds_inline=args.seeds_inline)
-        auto_ok = not args.no_auto_seeds
+        # Semillas
+        seeds_path = getattr(args, "seeds", None)
+        seeds_inline = getattr(args, "seeds_inline", None)
+        semillas = cargar_semillas(seeds_path, seeds_inline=seeds_inline)
+        auto_ok = not getattr(args, "no_auto_seeds", False)
 
-        if args.algo == "guild":
+        if args.cmd == "guild":
+            if not getattr(args, "input", None):
+                raise ValueError("Debe proporcionar --input para 'guild'.")
+            G = cargar_red(args.input)
+            out = getattr(args, "output", None) or _default_out_path("guild", args.input)
             df = rwr(
                 G,
                 semillas=semillas,
-                alpha=args.alpha,
-                tol=args.tol,
-                max_iters=args.max_iters,
-                usar_pesos=args.usar_pesos,
+                alpha=getattr(args, "alpha", 0.5),
+                tol=getattr(args, "tol", 1e-9),
+                max_iters=getattr(args, "max_iters", 10000),
+                usar_pesos=getattr(args, "usar_pesos", False),
                 auto_seeds_si_vacias=auto_ok,
             )
-        elif args.algo == "diamond":
+            guardar_tsv(df, out)
+            _plots_auto_postrun_single("guild", df, out)
+
+        elif args.cmd == "diamond":
+            if not getattr(args, "input", None):
+                raise ValueError("Debe proporcionar --input para 'diamond'.")
+            G = cargar_red(args.input)
+            out = getattr(args, "output", None) or _default_out_path("diamond", args.input, k=getattr(args, "k", 200))
             df = diamond(
                 G,
                 semillas=semillas,
-                k=args.k,
+                k=getattr(args, "k", 200),
                 auto_seeds_si_vacias=auto_ok,
             )
-        else:
-            raise ValueError(f"Algoritmo desconocido: {args.algo}")
+            guardar_tsv(df, out)
+            _plots_auto_postrun_single("diamond", df, out)
 
-        guardar_tsv(df, args.output)
-        _plots_auto_postrun(args, df, args.output)
+        elif args.cmd == "both":
+            in_g = getattr(args, "input_guild", None) or getattr(args, "input", None) or "data/network_guild.txt"
+            in_d = getattr(args, "input_diamond", None) or getattr(args, "input", None) or "data/network_diamond.txt"
+            out_g = getattr(args, "output_guild", None) or _default_out_path("guild", in_g)
+            out_d = getattr(args, "output_diamond", None) or _default_out_path("diamond", in_d, k=getattr(args, "k", 200))
+
+            logging.info("Ejecutando GUILD sobre '%s' y DIAMOnD sobre '%s'", in_g, in_d)
+
+            Gg = cargar_red(in_g)
+            df_g = rwr(
+                Gg,
+                semillas=semillas,
+                alpha=getattr(args, "alpha", 0.5),
+                tol=getattr(args, "tol", 1e-9),
+                max_iters=getattr(args, "max_iters", 10000),
+                usar_pesos=getattr(args, "usar_pesos", False),
+                auto_seeds_si_vacias=auto_ok,
+            )
+            guardar_tsv(df_g, out_g)
+            _plots_auto_postrun_single("guild", df_g, out_g)
+
+            Gd = cargar_red(in_d)
+            df_d = diamond(
+                Gd,
+                semillas=semillas,
+                k=getattr(args, "k", 200),
+                auto_seeds_si_vacias=auto_ok,
+            )
+            guardar_tsv(df_d, out_d)
+            _plots_auto_postrun_single("diamond", df_d, out_d)
+
+            _plots_auto_comparativo_si_ambos(out_g, out_d)
+
+        else:
+            raise ValueError(f"Comando desconocido: {args.cmd}")
+
         return 0
 
     except Exception as e:
