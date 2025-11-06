@@ -14,31 +14,6 @@ Este proyecto implementa un ejemplo reproducible de propagación en redes bioló
 
 ---
 
-## Bases teóricas (resumen)
-
-### Random Walk with Restart (RWR)
-
-Partiendo de un vector semilla \( \mathbf{p}_0 \), se itera
-
-\[
-\mathbf{p}_{t+1} = (1-\alpha)\, W\, \mathbf{p}_t + \alpha\, \mathbf{p}_0
-\]
-
-donde \( W \) es la **matriz de transición** (columnas normalizadas) del grafo. El fijo \( \mathbf{p}^\* \) es un ranking de proximidad a las semillas.
-
-### DIAMOnD (DIseAse MOdule Detection)
-
-Dado un conjunto \( S \) (inicialmente las semillas), para cada candidato \( v \notin S \) se calcula el **p-valor hipergeométrico** de observar \(\ge x\) enlaces de \( v \) hacia \( S \) dado su **grado** \( n \) en una red de \( N \) nodos con \( |S| = K \).  
-En cada paso se añade el gen con **menor p-valor** y se actualiza \( S \).
-
----
-
-## Comparativa Top-N
-
-El **Jaccard(Top-N)** evalúa la estabilidad/consenso entre listas de GUILD y DIAMOnD al crecer \( N \).
-
----
-
 ## Metodología
 
 ### 1) Entrada
@@ -102,34 +77,28 @@ Usarlos en paralelo permite **intersecar y comparar** listas, priorizando **cand
 
 ---
 
-## Resultados esperados (semillas ENO1, PGK1, HK2)
-
-- **GUILD** priorizará genes **próximos a glucólisis**.
-- **DIAMOnD** tenderá a destacar nodos con **enriquecimiento de enlaces** al módulo de glucólisis (dependiendo de la red de entrada).
-
----
-
 ## Guía de ejecución
 
 instalación dependencias: 
+```bash
 pip install -r requirements.txt
-
+```
 
 Ejecutar ambos métodos (usa los defaults del repo)
+```bash
 python scripts/propagacion_red.py both --seeds data/genes_seed.txt -k 200 -a 0.5 --log INFO
-
+```
 
 Solo GUILD (RWR) con el input por defecto
-
+```bash
 python scripts/propagacion_red.py guild -i data/network_guild.txt --seeds-inline ENO1,PGK1,HK2 -a 0.5 --tol 1e-9 --max-iters 10000 --usar-pesos -o results/network_guild.tsv --log DEBUG
-
+```
 
 Solo DIAMOnD con el input por defecto
+```bash
 python scripts/propagacion_red.py diamond -i data/network_diamond.txt --seeds data/genes_seed.txt -k 200 -o results/network_diamond_k200.tsv --log INFO
-
+```
 
 ---
-
-## Preparación del entorno
 
 
